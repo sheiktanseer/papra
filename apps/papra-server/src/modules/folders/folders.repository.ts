@@ -1,6 +1,6 @@
 import type { Database } from '../app/database/database.types';
 import { injectArguments } from '@corentinth/chisels';
-import { and, eq, isNull, sql, getTableColumns } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, getTableColumns } from 'drizzle-orm';
 import { documentsTable } from '../documents/documents.table';
 import { isNil } from '../shared/utils';
 import { createFolderNotFoundError } from './folders.errors';
@@ -209,20 +209,24 @@ async function updateFolderParent({
 }
 
 /**
- * Atomically deletes a folder and handles its dependents:
- *   1. Reparents direct child folders to the deleted folder's parent (or root if top-level).
- *   2. Moves all documents in the folder to root (folderId = null) — documents are NEVER deleted.
- *   3. Deletes the folder record itself.
+ * Atomically deletes a folder and ALL its descendants:
+ *   1. Recursively collects all subfolder IDs (depth-first, deepest first).
+ *   2. Soft-deletes every document in the folder tree (sets isDeleted = true).
+ *   3. Deletes every folder row (deepest first, so no FK conflicts).
  *
- * All three steps run inside a single database transaction to ensure consistency.
+ * Note: db.batch() is used instead of db.transaction() because
+ * @libsql/client in :memory: mode does not support interactive transactions.
+ * db.batch() provides equivalent atomicity guarantees for LibSQL.
  */
 async function deleteFolderCascade({
   folderId,
   organizationId,
+  userId,
   db,
 }: {
   folderId: string;
   organizationId: string;
+  userId: string;
   db: Database;
 }) {
   const { folder } = await getFolderById({ folderId, organizationId, db });
@@ -231,40 +235,52 @@ async function deleteFolderCascade({
     throw createFolderNotFoundError();
   }
 
-  // Note: db.batch() is used here instead of db.transaction() because
-  // @libsql/client in :memory: mode does not support interactive transactions.
-  // db.batch() provides equivalent atomicity guarantees for LibSQL.
-  await db.batch([
-    // Step 1: Reparent direct child folders to the deleted folder's parent (or root)
-    db
-      .update(foldersTable)
-      .set({ parentFolderId: folder.parentFolderId })
-      .where(
-        and(
-          eq(foldersTable.parentFolderId, folderId),
-          eq(foldersTable.organizationId, organizationId),
-        ),
-      ),
+  // Fetch all folders in the org once — cheap since folder counts are always small
+  const { folders } = await getOrganizationFolders({ organizationId, db });
 
-    // Step 2: Move documents in this folder to root (never delete them)
-    db
-      .update(documentsTable)
-      .set({ folderId: null })
-      .where(
-        and(
-          eq(documentsTable.folderId, folderId),
-          eq(documentsTable.organizationId, organizationId),
-        ),
-      ),
+  // Post-order DFS: collect IDs deepest-first so FK constraints are satisfied
+  // when we delete them (child rows deleted before their parents).
+  const allFolderIdsToProcess: string[] = [];
+  const findChildren = (parentId: string) => {
+    for (const f of folders) {
+      if (f.parentFolderId === parentId) {
+        findChildren(f.id);
+      }
+    }
+    allFolderIdsToProcess.push(parentId);
+  };
+  findChildren(folderId);
 
-    // Step 3: Delete the folder
+  const now = new Date();
+
+  // Build delete statements for each folder (deepest first)
+  const folderDeleteQueries = allFolderIdsToProcess.map(id =>
     db
       .delete(foldersTable)
       .where(
         and(
-          eq(foldersTable.id, folderId),
+          eq(foldersTable.id, id),
           eq(foldersTable.organizationId, organizationId),
         ),
       ),
+  );
+
+  // Step 1 (soft-delete documents) + Step 2 (delete folders deepest-first)
+  await db.batch([
+    db
+      .update(documentsTable)
+      .set({
+        isDeleted: true,
+        deletedAt: now,
+        deletedBy: userId,
+      })
+      .where(
+        and(
+          inArray(documentsTable.folderId, allFolderIdsToProcess),
+          eq(documentsTable.organizationId, organizationId),
+          eq(documentsTable.isDeleted, false),
+        ),
+      ),
+    ...folderDeleteQueries,
   ]);
 }

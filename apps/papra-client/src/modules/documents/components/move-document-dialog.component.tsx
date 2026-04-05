@@ -9,9 +9,11 @@ import { invalidateOrganizationDocumentsQuery } from '../documents.composables';
 export const MoveDocumentDialog: Component<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  documentId: string;
+  documentId?: string;
+  documentIds?: string[];
   organizationId: string;
-  currentFolderId: string | null | undefined;
+  currentFolderId?: string | null | undefined;
+  onSuccess?: () => void;
 }> = (props) => {
   const queryClient = useQueryClient();
 
@@ -22,18 +24,31 @@ export const MoveDocumentDialog: Component<{
   }));
 
   const moveMutation = useMutation(() => ({
-    mutationFn: (folderId: string | null) => 
-      assignDocumentToFolder({
-        organizationId: props.organizationId,
-        documentId: props.documentId,
-        folderId,
-      }),
+    mutationFn: async (folderId: string | null) => {
+      const idsToMove = props.documentIds ?? (props.documentId ? [props.documentId] : []);
+      await Promise.all(
+        idsToMove.map(id =>
+          assignDocumentToFolder({
+            organizationId: props.organizationId,
+            documentId: id,
+            folderId,
+          })
+        )
+      );
+    },
     onSuccess: () => {
-      createToast({ type: 'success', message: 'Document moved successfully' });
-      invalidateOrganizationDocumentsQuery({ organizationId: props.organizationId });
-      queryClient.invalidateQueries({
-        queryKey: ['organizations', props.organizationId, 'documents', props.documentId],
+      const idsToMove = props.documentIds ?? (props.documentId ? [props.documentId] : []);
+      createToast({ 
+        type: 'success', 
+        message: idsToMove.length > 1 ? `${idsToMove.length} documents moved successfully` : 'Document moved successfully' 
       });
+      invalidateOrganizationDocumentsQuery({ organizationId: props.organizationId });
+      for (const id of idsToMove) {
+        queryClient.invalidateQueries({
+          queryKey: ['organizations', props.organizationId, 'documents', id],
+        });
+      }
+      props.onSuccess?.();
       props.onOpenChange(false);
     },
   }));

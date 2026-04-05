@@ -431,6 +431,13 @@ export const translations = {
   'documents.rename.success': 'Document renamed successfully',
   'documents.rename.cancel': 'Cancel',
 
+  'upload-dialog.title': 'Import documents',
+  'upload-dialog.select-folder.label': 'Upload to:',
+  'upload-dialog.select-folder.placeholder': 'Select a folder',
+  'upload-dialog.select-folder.root': 'Root (no folder)',
+  'upload-dialog.cancel': 'Cancel',
+  'upload-dialog.choose-files': 'Choose files...',
+
   'import-documents.title.error': '{{ count }} documents failed',
   'import-documents.title.success': '{{ count }} documents imported',
   'import-documents.title.pending': '{{ count }} / {{ total }} documents imported',

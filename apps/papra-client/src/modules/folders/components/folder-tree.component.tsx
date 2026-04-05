@@ -57,8 +57,8 @@ const FolderNode: Component<{
       title: 'Delete folder?',
       message: (
         <>
-          Are you sure you want to delete <span class="font-bold">{props.node.name}</span>? 
-          Documents inside will be moved to the parent folder or All Documents. This cannot be undone.
+          Are you sure you want to delete <span class="font-bold">{props.node.name}</span>?{' '}
+          This will permanently delete the folder and move all documents inside to trash. Subfolders will also be deleted. This cannot be undone.
         </>
       ),
       confirmButton: {

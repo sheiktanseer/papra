@@ -204,7 +204,7 @@ function setupDeleteFolderRoute({ app, db }: RouteDefinitionContext) {
 
       await ensureUserHasOrganizationRole({ userId, organizationId, minimumRole: ORGANIZATION_ROLES.ADMIN, organizationsRepository });
 
-      await deleteFolder({ folderId, organizationId, foldersRepository });
+      await deleteFolder({ folderId, organizationId, userId, foldersRepository });
 
       return context.body(null, 204);
     },

@@ -21,6 +21,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/modules/ui/components/table';
 import { getDocumentIcon, getDocumentNameExtension, getDocumentNameWithoutExtension } from '../document.models';
 import { DocumentManagementDropdown } from './document-management-dropdown.component';
+import { Checkbox, CheckboxControl } from '@/modules/ui/components/checkbox';
+import { MoveDocumentDialog } from './move-document-dialog.component';
+import { createSignal } from 'solid-js';
+import { useConfirmModal } from '@/modules/shared/confirm';
+import { deleteDocument } from '../documents.services';
+import { invalidateOrganizationDocumentsQuery } from '../documents.composables';
+import { createToast } from '@/modules/ui/components/sonner';
 
 export const createdAtColumn: ColumnDef<Document> = {
   header: () => {
@@ -113,11 +120,82 @@ export const DocumentsPaginatedList: Component<{
   showPagination?: boolean;
 }> = (props) => {
   const { t } = useI18n();
+  const { confirm } = useConfirmModal();
+
+  const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
+  const [isMoveOpen, setIsMoveOpen] = createSignal(false);
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(new Set(props.documents.map(d => d.id)));
+    } else {
+      setSelectedIds(new Set<string>());
+    }
+  };
+
+  const handleSelect = (id: string, checked: boolean) => {
+    const newSet = new Set(selectedIds());
+    if (checked) {
+      newSet.add(id);
+    } else {
+      newSet.delete(id);
+    }
+    setSelectedIds(newSet);
+  };
+
+  const allSelected = () => props.documents.length > 0 && selectedIds().size === props.documents.length;
+  const someSelected = () => selectedIds().size > 0 && selectedIds().size < props.documents.length;
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds());
+    if (ids.length === 0) return;
+    
+    const orgId = props.documents[0]?.organizationId;
+    if (!orgId) return;
+
+    const isConfirmed = await confirm({
+      title: 'Delete documents',
+      message: `Are you sure you want to delete ${ids.length} documents?`,
+      confirmButton: { text: 'Delete', variant: 'destructive' },
+      cancelButton: { text: 'Cancel' },
+    });
+
+    if (!isConfirmed) return;
+
+    await Promise.all(ids.map(id => deleteDocument({ documentId: id, organizationId: orgId })));
+    
+    createToast({ type: 'success', message: `${ids.length} documents deleted` });
+    invalidateOrganizationDocumentsQuery({ organizationId: orgId });
+    setSelectedIds(new Set<string>());
+  };
+
+  const selectionColumn: ColumnDef<Document> = {
+    id: 'select',
+    header: () => (
+      <Checkbox
+        checked={allSelected()}
+        onChange={handleSelectAll}
+      >
+        <CheckboxControl class="mt-1" />
+      </Checkbox>
+    ),
+    cell: (data) => (
+      <Checkbox
+        class={cn("transition-opacity", selectedIds().has(data.row.original.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100")}
+        checked={selectedIds().has(data.row.original.id)}
+        onChange={(checked) => handleSelect(data.row.original.id, checked)}
+      >
+        <CheckboxControl />
+      </Checkbox>
+    ),
+  };
+
   const table = createSolidTable({
     get data() {
       return props.documents ?? [];
     },
     columns: [
+      selectionColumn,
       {
         header: () => t('documents.list.table.headers.file-name'),
         id: 'fileName',
@@ -205,7 +283,7 @@ export const DocumentsPaginatedList: Component<{
               <Show when={table.getRowModel().rows?.length}>
                 <For each={table.getRowModel().rows}>
                   {row => (
-                    <TableRow data-state={row.getIsSelected() && 'selected'}>
+                    <TableRow class="group transition-colors" data-state={selectedIds().has(row.original.id) && 'selected'}>
                       <For each={row.getVisibleCells()}>
                         {cell => (
                           <TableCell>
@@ -298,6 +376,32 @@ export const DocumentsPaginatedList: Component<{
           </Show>
         </Match>
       </Switch>
+
+      <Show when={selectedIds().size > 0}>
+        <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border shadow-lg rounded-full px-6 py-3 flex items-center gap-4 animate-in slide-in-from-bottom-5">
+          <span class="text-sm font-medium pr-2 border-r">{selectedIds().size} selected</span>
+          <Button variant="ghost" size="sm" onClick={() => setIsMoveOpen(true)} class="h-8">
+            <div class="i-tabler-folder-share size-4 mr-2" />
+            Move
+          </Button>
+          <Button variant="ghost" size="sm" onClick={handleBulkDelete} class="h-8 text-destructive hover:text-destructive">
+            <div class="i-tabler-trash size-4 mr-2" />
+            Delete
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set<string>())} class="h-8">
+            <div class="i-tabler-x size-4 mr-2" />
+            Clear
+          </Button>
+        </div>
+      </Show>
+      
+      <MoveDocumentDialog
+        open={isMoveOpen()}
+        onOpenChange={setIsMoveOpen}
+        documentIds={Array.from(selectedIds())}
+        organizationId={props.documents[0]?.organizationId ?? ''}
+        onSuccess={() => setSelectedIds(new Set<string>())}
+      />
     </div>
   );
 };

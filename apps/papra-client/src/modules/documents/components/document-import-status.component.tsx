@@ -16,9 +16,11 @@ import { Button } from '@/modules/ui/components/button';
 import { invalidateOrganizationDocumentsQuery } from '../documents.composables';
 import { MAX_CONCURRENT_DOCUMENT_UPLOADS } from '../documents.constants';
 import { uploadDocument } from '../documents.services';
+import { FolderSelectUploadDialog } from './folder-select-upload-dialog.component';
 
 const DocumentUploadContext = createContext<{
-  uploadDocuments: (args: { files: File[] }) => Promise<void>;
+  uploadDocuments: (args: { files: File[]; folderId?: string | null }) => Promise<void>;
+  promptImport: () => void;
 }>();
 
 export function useDocumentUpload() {
@@ -28,16 +30,7 @@ export function useDocumentUpload() {
     throw new Error('DocumentUploadContext not found');
   }
 
-  const { uploadDocuments } = context;
-
-  return {
-    uploadDocuments: async ({ files }: { files: File[] }) => uploadDocuments({ files }),
-    promptImport: async () => {
-      const { files } = await promptUploadFiles();
-
-      await uploadDocuments({ files });
-    },
-  };
+  return context;
 }
 
 type TaskSuccess = {
@@ -68,6 +61,11 @@ export const DocumentUploadProvider: ParentComponent<{ organizationId: string }>
 
   const [getState, setState] = createSignal<'open' | 'closed' | 'collapsed'>('closed');
   const [getTasks, setTasks] = createSignal<Task[]>([]);
+  const [isFolderSelectOpen, setIsFolderSelectOpen] = createSignal(false);
+
+  const promptImport = () => {
+    setIsFolderSelectOpen(true);
+  };
 
   const updateTaskStatus = (args: { file: File; status: 'success'; document: Document } | { file: File; status: 'error'; error: Error } | { file: File; status: 'pending' | 'uploading' }) => {
     setTasks(tasks => tasks.map(task => task.file === args.file ? { ...task, ...args } : task));
@@ -79,9 +77,9 @@ export const DocumentUploadProvider: ParentComponent<{ organizationId: string }>
     refetchOnWindowFocus: false,
   }));
 
-  const uploadDocuments = async ({ files }: { files: File[] }) => {
+  const uploadDocuments = async ({ files, folderId }: { files: File[]; folderId?: string | null }) => {
     // Capture the active folder at the moment upload is triggered
-    const activeFolderId = getActiveFolderId();
+    const activeFolderId = folderId !== undefined ? folderId : getActiveFolderId();
 
     setTasks(tasks => [...tasks, ...files.map(file => ({ file, status: 'pending' } as const))]);
     setState('open');
@@ -151,8 +149,18 @@ export const DocumentUploadProvider: ParentComponent<{ organizationId: string }>
   };
 
   return (
-    <DocumentUploadContext.Provider value={{ uploadDocuments }}>
+    <DocumentUploadContext.Provider value={{ uploadDocuments, promptImport }}>
       {props.children}
+
+      <FolderSelectUploadDialog
+        open={isFolderSelectOpen()}
+        onOpenChange={setIsFolderSelectOpen}
+        organizationId={props.organizationId}
+        initialFolderId={getActiveFolderId()}
+        onUpload={async ({ files, folderId }) => {
+          await uploadDocuments({ files, folderId });
+        }}
+      />
 
       <Portal>
         <Show when={getState() !== 'closed'}>

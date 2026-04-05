@@ -1,7 +1,7 @@
 import type { Component } from 'solid-js';
 import { useParams, useSearchParams } from '@solidjs/router';
 import { keepPreviousData, useQuery } from '@tanstack/solid-query';
-import { Show, Suspense } from 'solid-js';
+import { createMemo, createSignal, For, onMount, Show, Suspense } from 'solid-js';
 import { useI18n } from '@/modules/i18n/i18n.provider';
 import { createParamSynchronizedPagination } from '@/modules/shared/pagination/query-synchronized-pagination';
 import { createParamSynchronizedSignal } from '@/modules/shared/signals/params';
@@ -15,6 +15,7 @@ import { buildFolderTree, getFolderPath } from '@/modules/folders/folders.models
 import { fetchFolders } from '@/modules/folders/folders.services';
 import { DocumentUploadArea } from '../components/document-upload-area.component';
 import { createdAtColumn, createFolderColumn, DocumentsPaginatedList, standardActionsColumn, tagsColumn } from '../components/documents-list.component';
+import { FolderCard } from '../components/folder-card.component';
 import { fetchOrganizationDocuments } from '../documents.services';
 
 export const DocumentsPage: Component = () => {
@@ -24,6 +25,20 @@ export const DocumentsPage: Component = () => {
   const [getSearchQuery, setSearchQuery] = createParamSynchronizedSignal<string>({ paramKey: 'query', defaultValue: '' });
   const debouncedSearchQuery = useDebounce(getSearchQuery, 300);
   const [getPagination, setPagination] = createParamSynchronizedPagination();
+
+  const [getViewPreference, setViewPreference] = createSignal<'list' | 'grid'>('list');
+
+  onMount(() => {
+    const preference = localStorage.getItem('papra-view-preference');
+    if (preference === 'list' || preference === 'grid') {
+      setViewPreference(preference);
+    }
+  });
+
+  const toggleViewPreference = (view: 'list' | 'grid') => {
+    setViewPreference(view);
+    localStorage.setItem('papra-view-preference', view);
+  };
 
   // Read active folder from URL — undefined means "no filter", null means "root only"
   const getActiveFolderId = () => {
@@ -42,6 +57,17 @@ export const DocumentsPage: Component = () => {
   const folderPath = () => getFolderPath({
     folderId: getActiveFolderId() ?? null,
     folders: foldersQuery.data?.folders ?? [],
+  });
+
+  const visibleFolders = createMemo(() => {
+    const folders = foldersQuery.data?.folders ?? [];
+    const activeFolderId = getActiveFolderId();
+
+    if (activeFolderId === undefined || activeFolderId === null) {
+      return folders.filter(f => f.parentFolderId === null);
+    }
+
+    return folders.filter(f => f.parentFolderId === activeFolderId);
   });
 
   // Fast lookup: folderId → folder name for the folder column
@@ -107,7 +133,7 @@ export const DocumentsPage: Component = () => {
                         : t('documents.list.title')}
                     </h2>
 
-                    <div class="flex items-center">
+                    <div class="flex items-center gap-2">
                       <TextFieldRoot class="max-w-md flex-1">
                         <TextField
                           type="search"
@@ -124,7 +150,7 @@ export const DocumentsPage: Component = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          class="size-6 ml--8"
+                          class="size-6 ml--8 flex-shrink-0"
                           disabled={documentsQuery.isFetching}
                           onClick={() => setSearchQuery('')}
                           aria-label={documentsQuery.isFetching ? 'Loading' : 'Clear search'}
@@ -135,7 +161,37 @@ export const DocumentsPage: Component = () => {
                         </Button>
                       </Show>
 
+                      <div class="flex items-center p-0.5 rounded-lg border bg-muted/50 shrink-0">
+                        <Button
+                          variant={getViewPreference() === 'list' ? 'secondary' : 'ghost'}
+                          size="icon"
+                          class="size-8 rounded-md"
+                          onClick={() => toggleViewPreference('list')}
+                          aria-label="List view"
+                        >
+                          <div class="i-tabler-list size-4" />
+                        </Button>
+                        <Button
+                          variant={getViewPreference() === 'grid' ? 'secondary' : 'ghost'}
+                          size="icon"
+                          class="size-8 rounded-md"
+                          onClick={() => toggleViewPreference('grid')}
+                          aria-label="Grid view"
+                        >
+                          <div class="i-tabler-layout-grid size-4" />
+                        </Button>
+                      </div>
                     </div>
+
+                    <Show when={getViewPreference() === 'grid' && visibleFolders().length > 0 && debouncedSearchQuery().length === 0}>
+                      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-6">
+                        <For each={visibleFolders()}>
+                          {folder => (
+                            <FolderCard folder={folder} />
+                          )}
+                        </For>
+                      </div>
+                    </Show>
                     <div class="mb-4 text-sm text-muted-foreground mt-2 ml-2">
                       <Show
                         when={debouncedSearchQuery().length > 0}

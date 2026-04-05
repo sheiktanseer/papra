@@ -135,18 +135,19 @@ export async function moveFolder({
 export async function deleteFolder({
   folderId,
   organizationId,
+  userId,
   foldersRepository,
 }: {
   folderId: string;
   organizationId: string;
+  userId: string;
   foldersRepository: FoldersRepository;
 }) {
   // IDOR protection: verify folder belongs to this org before deletion
   await getFolderOrThrow({ folderId, organizationId, foldersRepository });
 
-  // The repository handles the full atomic cascade: reparents children,
-  // orphans documents (moves to root), then deletes the folder.
-  await foldersRepository.deleteFolderCascade({ folderId, organizationId });
+  // Recursively soft-deletes all documents in this folder tree, then deletes all subfolders and the folder itself.
+  await foldersRepository.deleteFolderCascade({ folderId, organizationId, userId });
 }
 
 // ---------------------------------------------------------------------------
