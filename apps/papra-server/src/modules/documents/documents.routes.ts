@@ -1,6 +1,7 @@
 import type { RouteDefinitionContext } from '../app/server.types';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
+import { API_KEY_PERMISSIONS } from '../api-keys/api-keys.constants';
 import { requireAuthentication } from '../app/auth/auth.middleware';
 import { getUser } from '../app/auth/auth.models';
 import { createCustomPropertiesRepository } from '../custom-properties/custom-properties.repository';
@@ -11,14 +12,21 @@ import { createPlansRepository } from '../plans/plans.repository';
 import { getOrganizationPlan } from '../plans/plans.usecases';
 import { getFileStreamFromMultipartForm } from '../shared/streams/file-upload';
 import { validateJsonBody, validateParams, validateQuery } from '../shared/validation/validation';
+import { createUsersRepository } from '../users/users.repository';
 import { createSubscriptionsRepository } from '../subscriptions/subscriptions.repository';
 import { createTagsRepository } from '../tags/tags.repository';
 import { searchOrganizationDocuments } from './document-search/document-search.usecase';
-import { createDocumentIsNotDeletedError } from './documents.errors';
+import { createForbiddenError } from '../app/auth/auth.errors';
+import { createDocumentIsNotDeletedError, createDocumentNotFoundError } from './documents.errors';
 import { formatDocumentForApi, formatDocumentsForApi, isDocumentSizeLimitEnabled } from './documents.models';
 import { createDocumentsRepository } from './documents.repository';
 import { documentIdSchema } from './documents.schemas';
 import { createDocumentCreationUsecase, deleteAllTrashDocuments, deleteTrashDocument, enrichAndFormatDocumentForApi, enrichAndFormatDocumentsForApi, ensureDocumentExists, getDocumentOrThrow, restoreDocument, trashDocument, updateDocument } from './documents.usecases';
+import { ORGANIZATION_ROLES } from '../organizations/organizations.constants';
+import { ensureUserHasOrganizationRole } from '../organizations/organizations.usecases';
+import { folderIdSchema } from '../folders/folders.schemas';
+import { createFoldersRepository } from '../folders/folders.repository';
+import { getFolderOrThrow } from '../folders/folders.usecases';
 
 export function registerDocumentsRoutes(context: RouteDefinitionContext) {
   setupCreateDocumentRoute(context);
@@ -32,6 +40,7 @@ export function registerDocumentsRoutes(context: RouteDefinitionContext) {
   setupDeleteDocumentRoute(context);
   setupGetDocumentFileRoute(context);
   setupUpdateDocumentRoute(context);
+  setupUpdateDocumentFolderRoute(context);
 }
 
 function setupCreateDocumentRoute({ app, ...deps }: RouteDefinitionContext) {
@@ -43,12 +52,23 @@ function setupCreateDocumentRoute({ app, ...deps }: RouteDefinitionContext) {
     validateParams(z.object({
       organizationId: organizationIdSchema,
     })),
+    validateQuery(z.object({
+      // Optional folder to place the uploaded document in (passed as ?folderId=fld_xxx)
+      folderId: folderIdSchema.optional(),
+    })),
     async (context) => {
       const { userId } = getUser({ context });
       const { organizationId } = context.req.valid('param');
+      const { folderId } = context.req.valid('query');
 
       const organizationsRepository = createOrganizationsRepository({ db });
       await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
+
+      // Verify the target folder belongs to this org BEFORE streaming the file
+      if (folderId) {
+        const foldersRepository = createFoldersRepository({ db });
+        await getFolderOrThrow({ folderId, organizationId, foldersRepository });
+      }
 
       // Get organization's plan-specific upload limit
       const plansRepository = createPlansRepository({ config });
@@ -64,13 +84,25 @@ function setupCreateDocumentRoute({ app, ...deps }: RouteDefinitionContext) {
       });
 
       const createDocument = createDocumentCreationUsecase({ ...deps });
+      const { document: createdDocument } = await createDocument({ fileStream, fileName, mimeType, userId, organizationId });
 
-      const { document } = await createDocument({ fileStream, fileName, mimeType, userId, organizationId });
+      // Assign to folder post-creation (keeps documents.usecases.ts unchanged)
+      let document = createdDocument;
+      if (folderId) {
+        const documentsRepository = createDocumentsRepository({ db });
+        const { document: movedDocument } = await documentsRepository.updateDocumentFolder({
+          documentId: createdDocument.id,
+          organizationId,
+          folderId,
+        });
+        document = movedDocument;
+      }
 
       return context.json({ document: formatDocumentForApi({ document }) });
     },
   );
 }
+
 
 function setupGetDeletedDocumentsRoute({ app, db }: RouteDefinitionContext) {
   app.get(
@@ -129,11 +161,12 @@ function setupGetDocumentRoute({ app, db }: RouteDefinitionContext) {
       const organizationsRepository = createOrganizationsRepository({ db });
       const customPropertiesRepository = createCustomPropertiesRepository({ db });
       const tagsRepository = createTagsRepository({ db });
+      const usersRepository = createUsersRepository({ db });
 
       await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
 
       const { document } = await getDocumentOrThrow({ documentId, organizationId, documentsRepository });
-      const { enrichedDocument } = await enrichAndFormatDocumentForApi({ document, tagsRepository, customPropertiesRepository });
+      const { enrichedDocument } = await enrichAndFormatDocumentForApi({ document, tagsRepository, customPropertiesRepository, usersRepository });
 
       return context.json({ document: enrichedDocument });
     },
@@ -157,7 +190,13 @@ function setupDeleteDocumentRoute({ app, db, eventServices }: RouteDefinitionCon
       const organizationsRepository = createOrganizationsRepository({ db });
 
       await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
-      await ensureDocumentExists({ documentId, organizationId, documentsRepository });
+      const { member } = await organizationsRepository.getOrganizationMemberByUserId({ userId, organizationId });
+
+      const { document } = await getDocumentOrThrow({ documentId, organizationId, documentsRepository });
+
+      if (member!.role === ORGANIZATION_ROLES.MEMBER && document.createdBy !== userId) {
+        throw createForbiddenError();
+      }
 
       await trashDocument({
         documentId,
@@ -267,22 +306,52 @@ function setupGetDocumentsRoute({ app, db, documentSearchServices }: RouteDefini
         searchQuery: z.string().optional().default(''),
         pageIndex: z.coerce.number().min(0).int().optional().default(0),
         pageSize: z.coerce.number().min(1).max(100).int().optional().default(100),
+        // folderId filters to direct children of that folder.
+        // Use 'null' (string literal) to explicitly request root-level documents.
+        // Omit entirely to return documents across all folders.
+        folderId: folderIdSchema.optional(),
+        showRootOnly: z.enum(['true', 'false']).optional(),
       }),
     ),
     async (context) => {
       const { userId } = getUser({ context });
 
       const { organizationId } = context.req.valid('param');
-      const { searchQuery, pageIndex, pageSize } = context.req.valid('query');
+      const { searchQuery, pageIndex, pageSize, folderId, showRootOnly } = context.req.valid('query');
 
       const organizationsRepository = createOrganizationsRepository({ db });
       const customPropertiesRepository = createCustomPropertiesRepository({ db });
       const tagsRepository = createTagsRepository({ db });
+      const documentsRepository = createDocumentsRepository({ db });
+      const usersRepository = createUsersRepository({ db });
 
       await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
 
-      const { documents, documentsCount } = await searchOrganizationDocuments({ organizationId, searchQuery, pageIndex, pageSize, documentSearchServices });
-      const { enrichedDocuments } = await enrichAndFormatDocumentsForApi({ documents, tagsRepository, customPropertiesRepository });
+      const { documents: searchResults, documentsCount: searchCount } = await searchOrganizationDocuments({
+        organizationId,
+        searchQuery,
+        pageIndex,
+        pageSize,
+        documentSearchServices,
+      });
+
+      let documents = searchResults;
+      let documentsCount = searchCount;
+
+      // Apply folder filter on top of FTS results when requested
+      if (folderId !== undefined || showRootOnly === 'true') {
+        const targetFolderId = showRootOnly === 'true' ? null : (folderId ?? null);
+        const searchResultIds = searchResults.map(d => d.id);
+        const { documents: folderDocs } = await documentsRepository.getDocumentsByIdsInFolder({
+          documentIds: searchResultIds,
+          organizationId,
+          folderId: targetFolderId,
+        });
+        documents = folderDocs;
+        documentsCount = folderDocs.length;
+      }
+
+      const { enrichedDocuments } = await enrichAndFormatDocumentsForApi({ documents, tagsRepository, customPropertiesRepository, usersRepository });
 
       return context.json({ documents: enrichedDocuments, documentsCount });
     },
@@ -403,7 +472,7 @@ function setupUpdateDocumentRoute({ app, db, eventServices }: RouteDefinitionCon
       const documentsRepository = createDocumentsRepository({ db });
       const organizationsRepository = createOrganizationsRepository({ db });
 
-      await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
+      await ensureUserHasOrganizationRole({ userId, organizationId, minimumRole: ORGANIZATION_ROLES.ADMIN, organizationsRepository });
       await ensureDocumentExists({ documentId, organizationId, documentsRepository });
 
       const { document } = await updateDocument({
@@ -413,6 +482,52 @@ function setupUpdateDocumentRoute({ app, db, eventServices }: RouteDefinitionCon
         documentsRepository,
         eventServices,
         changes,
+      });
+
+      return context.json({ document: formatDocumentForApi({ document }) });
+    },
+  );
+}
+
+/**
+ * PATCH /organizations/:orgId/documents/:docId/folder
+ * Moves a document into a folder or to root (folderId: null).
+ * Always verifies the target folder belongs to the same org.
+ */
+function setupUpdateDocumentFolderRoute({ app, db }: RouteDefinitionContext) {
+  app.patch(
+    '/api/organizations/:organizationId/documents/:documentId/folder',
+    requireAuthentication({ apiKeyPermissions: [API_KEY_PERMISSIONS.DOCUMENTS.UPDATE] }),
+    validateParams(z.object({
+      organizationId: organizationIdSchema,
+      documentId: documentIdSchema,
+    })),
+    validateJsonBody(z.object({
+      // null = move to root; a folderId string = move into that folder
+      folderId: folderIdSchema.nullable(),
+    })),
+    async (context) => {
+      const { userId } = getUser({ context });
+
+      const { organizationId, documentId } = context.req.valid('param');
+      const { folderId } = context.req.valid('json');
+
+      const documentsRepository = createDocumentsRepository({ db });
+      const organizationsRepository = createOrganizationsRepository({ db });
+
+      await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
+      await ensureDocumentExists({ documentId, organizationId, documentsRepository });
+
+      // When targeting a folder, verify it's in the same org (IDOR protection)
+      if (folderId !== null) {
+        const foldersRepository = createFoldersRepository({ db });
+        await getFolderOrThrow({ folderId, organizationId, foldersRepository });
+      }
+
+      const { document } = await documentsRepository.updateDocumentFolder({
+        documentId,
+        organizationId,
+        folderId,
       });
 
       return context.json({ document: formatDocumentForApi({ document }) });

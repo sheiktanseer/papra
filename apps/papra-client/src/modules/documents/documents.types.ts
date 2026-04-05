@@ -18,6 +18,9 @@ export type Document = {
   content: string;
   tags: Tag[];
   customProperties?: DocumentCustomProperty[];
+  folderId?: string | null;
+  createdBy?: string | null;
+  createdByName?: string | null;
 };
 
 export type DocumentActivityEvent = (typeof DOCUMENT_ACTIVITY_EVENTS)[keyof typeof DOCUMENT_ACTIVITY_EVENTS];

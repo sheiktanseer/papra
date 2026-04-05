@@ -5,6 +5,7 @@ import { registerConfigRoutes } from '../config/config.routes';
 import { registerCustomPropertiesRoutes } from '../custom-properties/custom-properties.routes';
 import { registerDocumentActivityRoutes } from '../documents/document-activity/document-activity.routes';
 import { registerDocumentsRoutes } from '../documents/documents.routes';
+import { registerFoldersRoutes } from '../folders/folders.routes';
 import { registerIntakeEmailsRoutes } from '../intake-emails/intake-emails.routes';
 import { registerInvitationsRoutes } from '../invitations/invitations.routes';
 import { registerOrganizationsRoutes } from '../organizations/organizations.routes';
@@ -25,6 +26,7 @@ export function registerRoutes(context: RouteDefinitionContext) {
   registerUsersRoutes(context);
   registerOrganizationsRoutes(context);
   registerDocumentsRoutes(context);
+  registerFoldersRoutes(context);
   registerTagsRoutes(context);
   registerTaggingRulesRoutes(context);
   registerApiKeysRoutes(context);

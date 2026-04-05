@@ -6,13 +6,19 @@ import { coerceDates, getFormData } from '../shared/http/http-client.models';
 export async function uploadDocument({
   file,
   organizationId,
+  folderId,
 }: {
   file: File;
   organizationId: string;
+  folderId?: string | null;
 }) {
+  const path = folderId
+    ? `/api/organizations/${organizationId}/documents?folderId=${encodeURIComponent(folderId)}`
+    : `/api/organizations/${organizationId}/documents`;
+
   const { document } = await apiClient<{ document: AsDto<Document> }>({
     method: 'POST',
-    path: `/api/organizations/${organizationId}/documents`,
+    path,
     body: getFormData({ file }),
   });
 
@@ -26,11 +32,13 @@ export async function fetchOrganizationDocuments({
   pageIndex,
   pageSize,
   searchQuery,
+  folderId,
 }: {
   organizationId: string;
   pageIndex: number;
   pageSize: number;
   searchQuery?: string;
+  folderId?: string | null;
 }) {
   const {
     documents,
@@ -45,6 +53,12 @@ export async function fetchOrganizationDocuments({
       searchQuery,
       pageIndex,
       pageSize,
+      // undefined = omitted (all folders); string = specific folder; send showRootOnly for null (root)
+      ...(folderId !== undefined
+        ? folderId === null
+          ? { showRootOnly: 'true' }
+          : { folderId }
+        : {}),
     },
   });
 

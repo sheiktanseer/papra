@@ -1,7 +1,7 @@
 import type { ParentComponent } from 'solid-js';
 import type { Document } from '../documents.types';
 import { safely } from '@corentinth/chisels';
-import { A } from '@solidjs/router';
+import { A, useSearchParams } from '@solidjs/router';
 import { useQuery } from '@tanstack/solid-query';
 import pLimit from 'p-limit';
 import { createContext, createSignal, For, Match, Show, Switch, useContext } from 'solid-js';
@@ -62,6 +62,10 @@ export const DocumentUploadProvider: ParentComponent<{ organizationId: string }>
   const { getErrorMessage } = useI18nApiErrors();
   const { t } = useI18n();
 
+  // Read the active folder from URL at component level (SolidJS reactive context)
+  const [searchParams] = useSearchParams();
+  const getActiveFolderId = () => (searchParams.folder as string | undefined) ?? null;
+
   const [getState, setState] = createSignal<'open' | 'closed' | 'collapsed'>('closed');
   const [getTasks, setTasks] = createSignal<Task[]>([]);
 
@@ -76,6 +80,9 @@ export const DocumentUploadProvider: ParentComponent<{ organizationId: string }>
   }));
 
   const uploadDocuments = async ({ files }: { files: File[] }) => {
+    // Capture the active folder at the moment upload is triggered
+    const activeFolderId = getActiveFolderId();
+
     setTasks(tasks => [...tasks, ...files.map(file => ({ file, status: 'pending' } as const))]);
     setState('open');
 
@@ -99,7 +106,11 @@ export const DocumentUploadProvider: ParentComponent<{ organizationId: string }>
       await limit(async () => {
         updateTaskStatus({ file, status: 'uploading' });
 
-        const [result, error] = await safely(uploadDocument({ file, organizationId: props.organizationId }));
+        const [result, error] = await safely(uploadDocument({
+          file,
+          organizationId: props.organizationId,
+          folderId: activeFolderId,
+        }));
 
         if (error) {
           updateTaskStatus({ file, status: 'error', error });

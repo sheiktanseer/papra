@@ -71,6 +71,39 @@ export const tagsColumn: ColumnDef<Document> = {
   ),
 };
 
+/**
+ * Creates a folder column that shows the folder name badge.
+ * Accepts a getter for the folder map so it stays reactive.
+ */
+export function createFolderColumn(getFolderName: (folderId: string) => string | null): ColumnDef<Document> {
+  return {
+    header: () => <span class="hidden md:block text-muted-foreground">Folder</span>,
+    id: 'folder',
+    cell: (data) => {
+      const folderId = data.row.original.folderId;
+      if (!folderId) {
+        return null;
+      }
+      const name = getFolderName(folderId);
+      if (!name) {
+        return null;
+      }
+      return (
+        <div class="hidden md:flex items-center">
+          <a
+            href={`?folder=${encodeURIComponent(folderId)}`}
+            class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors bg-muted/60 rounded px-1.5 py-0.5 max-w-28 truncate"
+            title={name}
+          >
+            <div class="i-tabler-folder size-3 shrink-0" />
+            <span class="truncate">{name}</span>
+          </a>
+        </div>
+      );
+    },
+  };
+}
+
 export const DocumentsPaginatedList: Component<{
   documents: Document[];
   documentsCount: number;
@@ -110,9 +143,13 @@ export const DocumentsPaginatedList: Component<{
               </A>
 
               <div class="text-xs text-muted-foreground lh-tight">
-                {[formatBytes({ bytes: data.row.original.originalSize, base: 1000 }), getDocumentNameExtension({ name: data.row.original.name })].filter(Boolean).join(' - ')}
+                {[
+                  formatBytes({ bytes: data.row.original.originalSize, base: 1000 }),
+                  getDocumentNameExtension({ name: data.row.original.name }),
+                  data.row.original.createdByName
+                ].filter(Boolean).join(' · ')}
                 {' '}
-                -
+                ·
                 {' '}
                 <RelativeTime date={data.row.original.createdAt} />
               </div>

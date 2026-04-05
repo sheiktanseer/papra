@@ -26,6 +26,7 @@ import { TextArea } from '@/modules/ui/components/textarea';
 import { TextField, TextFieldLabel, TextFieldRoot } from '@/modules/ui/components/textfield';
 import { Tag as TagComponent, TagLink } from '../components/tag.component';
 import { createTag, deleteTag, fetchTags, updateTag } from '../tags.services';
+import { DEFAULT_COLOR_PALETTE } from '@/modules/ui/constants/colors.constants';
 
 // To keep, useful for generating swatches
 // function generateSwatches(count = 9, saturation = 100, lightness = 74) {
@@ -38,13 +39,11 @@ import { createTag, deleteTag, fetchTags, updateTag } from '../tags.services';
 //   return colors;
 // }
 
-const defaultColors = ['#D8FF75', '#7FFF7A', '#7AFFCE', '#7AD7FF', '#7A7FFF', '#CE7AFF', '#FF7AD7', '#FF7A7F', '#FFCE7A', '#FFFFFF'];
-
 const TagColorPicker: Component<{
   color: string;
   onChange: (color: string) => void;
 }> = (props) => {
-  return <ColorSwatchPicker value={props.color} onChange={props.onChange} colors={defaultColors} />;
+  return <ColorSwatchPicker value={props.color} onChange={props.onChange} colors={DEFAULT_COLOR_PALETTE} />;
 };
 
 const TagForm: Component<{
