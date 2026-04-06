@@ -9,6 +9,7 @@ import type { Logger } from '../shared/logger/logger';
 import type { SubscriptionsRepository } from '../subscriptions/subscriptions.repository';
 import type { TaggingRulesRepository } from '../tagging-rules/tagging-rules.repository';
 import type { TagsRepository } from '../tags/tags.repository';
+import type { UsersRepository } from '../users/users.repository';
 import type { TaskServices } from '../tasks/tasks.services';
 import type { WebhookRepository } from '../webhooks/webhook.repository';
 import type { DocumentActivityRepository } from './document-activity/document-activity.repository';
@@ -597,10 +598,12 @@ export async function enrichAndFormatDocumentsForApi({
   documents,
   tagsRepository,
   customPropertiesRepository,
+  usersRepository,
 }: {
   documents: Array<PartialBy<Document, 'content'>>;
   tagsRepository: TagsRepository;
   customPropertiesRepository: CustomPropertiesRepository;
+  usersRepository: UsersRepository;
 }) {
   if (documents.length === 0) {
     return { enrichedDocuments: [] };
@@ -628,15 +631,21 @@ export async function enrichAndFormatDocumentsForApi({
 
   const documentIds = documents.map(d => d.id);
 
-  const [{ tagsByDocumentId }, { valuesByDocumentId }, { propertyDefinitions }] = await Promise.all([
+  const uniqueUserIds = [...new Set(documents.map(d => d.createdBy).filter((id): id is string => id !== null && id !== undefined))];
+
+  const [{ tagsByDocumentId }, { valuesByDocumentId }, { propertyDefinitions }, { users }] = await Promise.all([
     tagsRepository.getTagsByDocumentIds({ documentIds }),
     customPropertiesRepository.getCustomPropertyValuesByDocumentIds({ documentIds }),
     customPropertiesRepository.getOrganizationPropertyDefinitions({ organizationId }),
+    usersRepository.getUsersByIds({ userIds: uniqueUserIds }),
   ]);
+
+  const usersById = Object.fromEntries(users.map(u => [u.id, u]));
 
   return {
     enrichedDocuments: documents.map(document => ({
       ...formatDocumentForApi({ document }),
+      createdByName: document.createdBy ? (usersById[document.createdBy]?.name ?? null) : null,
       tags: tagsByDocumentId[document.id] ?? [],
       customProperties: buildCustomPropertiesArray({
         rawValues: valuesByDocumentId[document.id] ?? [],
@@ -650,12 +659,14 @@ export async function enrichAndFormatDocumentForApi({
   document,
   tagsRepository,
   customPropertiesRepository,
+  usersRepository,
 }: {
   document: PartialBy<Document, 'content'>;
   tagsRepository: TagsRepository;
   customPropertiesRepository: CustomPropertiesRepository;
+  usersRepository: UsersRepository;
 }) {
-  const { enrichedDocuments } = await enrichAndFormatDocumentsForApi({ documents: [document], tagsRepository, customPropertiesRepository });
+  const { enrichedDocuments } = await enrichAndFormatDocumentsForApi({ documents: [document], tagsRepository, customPropertiesRepository, usersRepository });
 
   const [enrichedDocument] = enrichedDocuments;
 

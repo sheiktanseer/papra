@@ -1,7 +1,7 @@
 import type { Database } from '../app/database/database.types';
 import type { DbInsertableUser } from './users.types';
 import { injectArguments } from '@corentinth/chisels';
-import { count, desc, eq, getTableColumns } from 'drizzle-orm';
+import { count, desc, eq, getTableColumns, inArray } from 'drizzle-orm';
 import { organizationMembersTable } from '../organizations/organizations.table';
 import { isUniqueConstraintError } from '../shared/db/constraints.models';
 import { withPagination } from '../shared/db/pagination';
@@ -23,6 +23,7 @@ function createUsersRepository({ db }: { db: Database }) {
       updateUser,
       getUserCount,
       listUsers,
+      getUsersByIds,
     },
     { db },
   );
@@ -50,6 +51,16 @@ async function getUserByEmail({ email, db }: { email: string; db: Database }) {
   }
 
   return { user };
+}
+
+async function getUsersByIds({ userIds, db }: { userIds: string[]; db: Database }) {
+  if (userIds.length === 0) {
+    return { users: [] };
+  }
+
+  const users = await db.select().from(usersTable).where(inArray(usersTable.id, userIds));
+
+  return { users };
 }
 
 async function getUserById({ userId, db }: { userId: string; db: Database }) {

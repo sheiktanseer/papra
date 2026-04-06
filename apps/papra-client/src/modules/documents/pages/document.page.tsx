@@ -23,9 +23,11 @@ import { DocumentDatePicker } from '../components/document-date-picker.component
 import { DocumentPreview } from '../components/document-preview.component';
 import { DocumentOpenWithDropdownItems } from '../components/open-with.component';
 import { useRenameDocumentDialog } from '../components/rename-document-button.component';
+import { MoveDocumentDialog } from '../components/move-document-dialog.component';
 import { getDaysBeforePermanentDeletion, getDocumentActivityIcon, getDocumentOpenWithApps } from '../document.models';
 import { useDeleteDocument, useRestoreDocument } from '../documents.composables';
 import { fetchDocument, fetchDocumentActivities, fetchDocumentFile } from '../documents.services';
+import { fetchFolders } from '@/modules/folders/folders.services';
 
 type KeyValueItem = {
   label: string | JSX.Element;
@@ -123,6 +125,7 @@ const DocumentOpenWithDropdown: Component<{ document: Document; organizationId: 
 };
 
 export const DocumentPage: Component = () => {
+  const [isMoveOpen, setIsMoveOpen] = createSignal(false);
   const { t, formatRelativeTime } = useI18n();
   const params = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -160,6 +163,16 @@ export const DocumentPage: Component = () => {
     queryKey: ['organizations', params.organizationId, 'custom-properties'],
     queryFn: () => fetchCustomPropertyDefinitions({ organizationId: params.organizationId }),
   }));
+
+  const foldersQuery = useQuery(() => ({
+    queryKey: ['organizations', params.organizationId, 'folders'],
+    queryFn: () => fetchFolders({ organizationId: params.organizationId }),
+  }));
+
+  const getFolderForDocument = (folderId: string | null | undefined) => {
+    if (!folderId) { return null; }
+    return foldersQuery.data?.folders.find(f => f.id === folderId) ?? null;
+  };
 
   const activityPageSize = 20;
   const activityQuery = useInfiniteQuery(() => ({
@@ -345,6 +358,43 @@ export const DocumentPage: Component = () => {
                             value: getDocument().updatedAt ? formatRelativeTime(getDocument().updatedAt!) : <span class="text-muted-foreground">{t('documents.info.never')}</span>,
                             icon: 'i-tabler-calendar',
                           },
+                          // Folder row
+                          {
+                            label: 'Folder',
+                            icon: 'i-tabler-folder',
+                            value: (
+                              <div class="flex items-center gap-2 group max-w-full">
+                                {(() => {
+                                  const folder = getFolderForDocument(getDocument().folderId);
+                                  return folder
+                                    ? (
+                                        <a
+                                          href={`/organizations/${params.organizationId}/documents?folder=${encodeURIComponent(folder.id)}`}
+                                          class="flex items-center gap-1.5 text-primary hover:underline transition-colors block max-w-[200px]"
+                                        >
+                                          <div class="i-tabler-folder-open size-4 shrink-0" style={{ color: folder.color ?? undefined }} />
+                                          <span class="truncate block" title={folder.name}>{folder.name}</span>
+                                        </a>
+                                      )
+                                    : (
+                                        <span class="flex items-center gap-1.5 text-muted-foreground/70">
+                                          <div class="i-tabler-folder size-4 shrink-0" />
+                                          Root
+                                        </span>
+                                      );
+                                })()}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  class="size-6 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                                  onClick={() => setIsMoveOpen(true)}
+                                  title="Move to folder"
+                                >
+                                  <div class="i-tabler-pencil size-3.5" />
+                                </Button>
+                              </div>
+                            ),
+                          },
                         ]}
                         />
 
@@ -417,6 +467,17 @@ export const DocumentPage: Component = () => {
           </Show>
         </div>
       </Suspense>
+      <Show when={documentQuery.data?.document}>
+        {getDocument => (
+          <MoveDocumentDialog
+            open={isMoveOpen()}
+            onOpenChange={setIsMoveOpen}
+            documentId={params.documentId}
+            organizationId={params.organizationId}
+            currentFolderId={getDocument().folderId}
+          />
+        )}
+      </Show>
     </div>
   );
 };

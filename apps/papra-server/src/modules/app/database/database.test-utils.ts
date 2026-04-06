@@ -6,6 +6,7 @@ import { apiKeyOrganizationsTable, apiKeysTable } from '../../api-keys/api-keys.
 import { customPropertyDefinitionsTable, documentCustomPropertyValuesTable } from '../../custom-properties/custom-properties.table';
 import { customPropertySelectOptionsTable } from '../../custom-properties/options/custom-properties-options.table';
 import { documentsTable } from '../../documents/documents.table';
+import { foldersTable } from '../../folders/folders.table';
 import { intakeEmailsTable } from '../../intake-emails/intake-emails.tables';
 import { organizationInvitationsTable, organizationMembersTable, organizationsTable } from '../../organizations/organizations.table';
 import { userRolesTable } from '../../roles/roles.table';
@@ -39,6 +40,7 @@ const seedTables = {
   organizations: organizationsTable,
   organizationMembers: organizationMembersTable,
   documents: documentsTable,
+  folders: foldersTable,
   tags: tagsTable,
   documentsTags: documentsTagsTable,
   intakeEmails: intakeEmailsTable,

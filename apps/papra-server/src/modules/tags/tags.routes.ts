@@ -10,7 +10,8 @@ import { createDocumentsRepository } from '../documents/documents.repository';
 import { documentIdSchema } from '../documents/documents.schemas';
 import { organizationIdSchema } from '../organizations/organization.schemas';
 import { createOrganizationsRepository } from '../organizations/organizations.repository';
-import { ensureUserIsInOrganization } from '../organizations/organizations.usecases';
+import { ensureUserIsInOrganization, ensureUserHasOrganizationRole } from '../organizations/organizations.usecases';
+import { ORGANIZATION_ROLES } from '../organizations/organizations.constants';
 import { validateJsonBody, validateParams } from '../shared/validation/validation';
 import { createWebhookRepository } from '../webhooks/webhook.repository';
 import { deferTriggerWebhooks } from '../webhooks/webhook.usecases';
@@ -51,7 +52,7 @@ function setupCreateNewTagRoute({ app, db, config }: RouteDefinitionContext) {
       const tagsRepository = createTagsRepository({ db });
       const organizationsRepository = createOrganizationsRepository({ db });
 
-      await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
+      await ensureUserHasOrganizationRole({ userId, organizationId, minimumRole: ORGANIZATION_ROLES.ADMIN, organizationsRepository });
 
       const { tag } = await createTag({ organizationId, name, color, description, config, tagsRepository });
 
@@ -141,7 +142,7 @@ function setupDeleteTagRoute({ app, db }: RouteDefinitionContext) {
       const tagsRepository = createTagsRepository({ db });
       const organizationsRepository = createOrganizationsRepository({ db });
 
-      await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
+      await ensureUserHasOrganizationRole({ userId, organizationId, minimumRole: ORGANIZATION_ROLES.ADMIN, organizationsRepository });
 
       await tagsRepository.deleteTag({ tagId });
 
@@ -227,7 +228,7 @@ function setupRemoveTagFromDocumentRoute({ app, db }: RouteDefinitionContext) {
       const documentActivityRepository = createDocumentActivityRepository({ db });
       const documentsRepository = createDocumentsRepository({ db });
 
-      await ensureUserIsInOrganization({ userId, organizationId, organizationsRepository });
+      await ensureUserHasOrganizationRole({ userId, organizationId, minimumRole: ORGANIZATION_ROLES.ADMIN, organizationsRepository });
 
       const [{ document }, { tag }] = await Promise.all([
         documentsRepository.getDocumentById({ organizationId, documentId }),

@@ -1,7 +1,7 @@
 import type { Database } from '../app/database/database.types';
 import type { DbInsertableDocument } from './documents.types';
 import { injectArguments, safely } from '@corentinth/chisels';
-import { and, count, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { createIterator } from '../app/database/database.usecases';
 import { createOrganizationNotFoundError } from '../organizations/organizations.errors';
 import { subDays } from '../shared/date';
@@ -34,6 +34,9 @@ export function createDocumentsRepository({ db }: { db: Database }) {
       updateDocument,
       getGlobalDocumentsStats,
       getDocumentsByIds,
+      updateDocumentFolder,
+      updateDocumentsToFolder,
+      getDocumentsByIdsInFolder,
     },
     { db },
   );
@@ -369,4 +372,110 @@ async function getGlobalDocumentsStats({ db }: { db: Database }) {
     totalDocumentsCount,
     totalDocumentsSize: Number(totalDocumentsSize ?? 0),
   };
+}
+
+/**
+ * Moves a single document into a folder (or to root when folderId is null).
+ * Verifies org ownership to prevent IDOR.
+ */
+async function updateDocumentFolder({
+  documentId,
+  organizationId,
+  folderId,
+  db,
+}: {
+  documentId: string;
+  organizationId: string;
+  folderId: string | null;
+  db: Database;
+}) {
+  const [document] = await db
+    .update(documentsTable)
+    .set({ folderId })
+    .where(
+      and(
+        eq(documentsTable.id, documentId),
+        eq(documentsTable.organizationId, organizationId),
+      ),
+    )
+    .returning();
+
+  if (isNil(document)) {
+    throw createDocumentNotFoundError();
+  }
+
+  return { document };
+}
+
+/**
+ * Assigns all documents in an org whose folderId matches `currentFolderId`
+ * to `newFolderId`. Used when a folder is deleted (pass null for newFolderId)
+ * or during bulk moves.
+ */
+async function updateDocumentsToFolder({
+  currentFolderId,
+  newFolderId,
+  organizationId,
+  db,
+}: {
+  currentFolderId: string | null;
+  newFolderId: string | null;
+  organizationId: string;
+  db: Database;
+}) {
+  const folderFilter = isNull(documentsTable.folderId);
+  const currentFilter = currentFolderId === null
+    ? folderFilter
+    : eq(documentsTable.folderId, currentFolderId);
+
+  await db
+    .update(documentsTable)
+    .set({ folderId: newFolderId })
+    .where(
+      and(
+        eq(documentsTable.organizationId, organizationId),
+        currentFilter,
+      ),
+    );
+}
+
+/**
+ * Given a list of document IDs (from FTS search), returns only those that
+ * belong to the given folder. When folderId is null, returns root-level docs.
+ * Used to apply a folder filter on top of full-text search results.
+ * When documentIds is empty (FTS found nothing), queries the folder directly.
+ */
+async function getDocumentsByIdsInFolder({
+  documentIds,
+  organizationId,
+  folderId,
+  db,
+}: {
+  documentIds: string[];
+  organizationId: string;
+  folderId: string | null;
+  db: Database;
+}) {
+  const folderFilter = folderId === null
+    ? isNull(documentsTable.folderId)
+    : eq(documentsTable.folderId, folderId);
+
+  const baseConditions = [
+    eq(documentsTable.organizationId, organizationId),
+    eq(documentsTable.isDeleted, false),
+    folderFilter,
+  ];
+
+  // When we have a search result set, restrict to those IDs
+  const conditions = documentIds.length > 0
+    ? [...baseConditions, inArray(documentsTable.id, documentIds)]
+    : baseConditions;
+
+  const documents = await db
+    .select()
+    .from(documentsTable)
+    .where(and(...conditions))
+    .orderBy(desc(documentsTable.createdAt));
+
+  return { documents };
 }

@@ -62,6 +62,34 @@ export async function ensureUserIsInOrganization({
   }
 }
 
+export async function ensureUserHasOrganizationRole({
+  userId,
+  organizationId,
+  minimumRole,
+  organizationsRepository,
+}: {
+  userId: string;
+  organizationId: string;
+  minimumRole: OrganizationRole;
+  organizationsRepository: OrganizationsRepository;
+}) {
+  const { member } = await organizationsRepository.getOrganizationMemberByUserId({ userId, organizationId });
+
+  if (!member) {
+    throw createUserNotInOrganizationError();
+  }
+
+  const roleHierarchy: Record<OrganizationRole, number> = {
+    [ORGANIZATION_ROLES.MEMBER]: 0,
+    [ORGANIZATION_ROLES.ADMIN]: 1,
+    [ORGANIZATION_ROLES.OWNER]: 2,
+  };
+
+  if (roleHierarchy[member.role] < roleHierarchy[minimumRole]) {
+    throw createForbiddenError();
+  }
+}
+
 export async function checkIfUserCanCreateNewOrganization({
   userId,
   config,
